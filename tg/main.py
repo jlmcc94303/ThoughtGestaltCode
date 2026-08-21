@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Main file for running the Language Modelling example with nanodo.
+"""Main file for running the Language Modelling example with Thought Gestalt.
 
 This file is intentionally kept short. The majority for logic is in libraries
 that can be easily tested and imported in Colab.
@@ -23,7 +23,7 @@ from absl import logging
 from clu import platform
 import jax
 from ml_collections import config_flags
-from nanodo import train
+from tg.training import train
 
 FLAGS = flags.FLAGS
 

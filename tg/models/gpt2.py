@@ -23,7 +23,7 @@ from flax import linen as nn
 import jax
 import jax.numpy as jnp
 
-from nanodo import fsdp
+from tg.models import fsdp
 
 
 @dataclasses.dataclass

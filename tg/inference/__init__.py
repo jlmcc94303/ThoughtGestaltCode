@@ -11,7 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Nanodo public API."""
+"""Inference and probing for TG.
 
-
-__version__ = "0.0.1"
+Kept out of `tg/training/` on purpose: nothing here runs inside the jitted
+training step, and the STM is threaded in Python across calls rather than
+unrolled into one graph.
+"""

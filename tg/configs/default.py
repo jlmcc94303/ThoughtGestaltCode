@@ -14,7 +14,7 @@
 """Default Hyperparameter configuration.
 
 Usage:
-/bin/bash third_party/py/nanodo/run.sh --config=default
+/bin/bash third_party/py/tg/run.sh --config=default
 """
 
 import ml_collections

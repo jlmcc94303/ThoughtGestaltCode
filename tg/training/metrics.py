@@ -20,14 +20,14 @@ from typing import Any, TYPE_CHECKING
 from flax.struct import dataclass
 import jax
 import jax.numpy as jnp
-from nanodo import optimizer
+from tg.training import optimizer
 import numpy as np
 
 
 if TYPE_CHECKING:
   from flax.training.train_state import TrainState
   import ml_collections
-  from nanodo import loss as loss_lib
+  from tg.training import loss as loss_lib
 
 
 PyTree = Any
@@ -284,6 +284,12 @@ class Average:
     else:
       nnz = np.count_nonzero if isinstance(x, np.ndarray) else jnp.count_nonzero
       count = nnz(mask)
+      # Callers pass float weight arrays. `count_nonzero` above already treats
+      # the mask as a boolean indicator, and older jnp coerced it silently;
+      # current jnp rejects a non-bool `where`, so cast explicitly. This
+      # preserves the original semantics exactly -- the mask selects, it does
+      # not weight.
+      mask = mask.astype(bool)
 
     total = x.sum(where=mask)
     mean = total / count

@@ -15,11 +15,17 @@
 
 # pylint: disable=invalid-name,g-import-not-at-top,unused-import
 
+import functools
 from typing import TYPE_CHECKING
 
 from flax import linen as nn
-from nanodo import loss as loss_lib
-from nanodo import model
+from tg.models import gpt2 as model
+from tg.models import gpt2_gist
+from tg.models import tg_config
+from tg.models import tg_model
+from tg.training import gist_loss
+from tg.training import loss as loss_lib
+from tg.training import tg_loss
 
 if TYPE_CHECKING:
   import ml_collections
@@ -30,6 +36,28 @@ def get_model_and_loss(
     vocab_size: int,
 ) -> tuple[nn.Module, loss_lib.LossFnFactory]:
   """Returns an instantiated (potentially experimental) model."""
+
+  model_type = c.get("model_type", "do")
+
+  if model_type == "do_gist":
+    # GPT-2 + gist masking (paper 3.3): stock architecture, but attention is
+    # restricted to the current sentence plus earlier sentences' [EOS] gists.
+    cfg = model.DoConfig(**c.model, V=vocab_size)
+    module = gpt2_gist.TransformerGist(cfg)
+    get_loss_fn = functools.partial(
+        gist_loss.get_gist_loss_fn,
+        eos_id=int(c.gist_eos_id),
+        special_ids=tuple(c.get("gist_special_ids", ())),
+    )
+    return module, get_loss_fn
+
+  if model_type == "tg":
+    # Thought Gestalt: recurrent sentence-level transformer. Its loss factory
+    # takes a `tg_loss.TgBatch` (a batch of documents) rather than `in_BxL`.
+    cfg = tg_config.TgConfig(**c.model, V=vocab_size)
+    module = tg_model.ThoughtGestaltDo(cfg)
+    get_loss_fn = functools.partial(tg_loss.get_tg_loss_fn, cfg=cfg)
+    return module, get_loss_fn
 
   # default model and configs
   m = model

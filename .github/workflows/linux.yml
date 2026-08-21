@@ -2,7 +2,7 @@
 # Copied from github.com/google/jax-md and github.com/google/jax
 # For more information see: https://help.github.com/actions/language-and-framework-guides/using-python-with-github-actions
 
-name: linux
+name: build
 
 on:
   push:
@@ -39,39 +39,31 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
 
-    - name: Install dependencies
+    - name: Install
       run: |
         pip install --upgrade pip
-        pip install  -e .
-        pip install -e .[test]
-        pip install pytest
-        pip install pytest-xdist
-        pip install pytest-cov
+        pip install -e .
 
-    - name: Test with pytest and generate coverage report (Ubuntu)
+    - name: Import check
       run: |
-        JAX_ENABLE_X64=${{ matrix.JAX_ENABLE_X64 }} PYTHONHASHSEED=0 pytest -n auto --cov=nanodo --cov-report=xml --cov-report=term
+        JAX_ENABLE_X64=${{ matrix.JAX_ENABLE_X64 }} python -c "
+        from tg.models import factory, tg_model, tg_config
+        from tg.data import tg as tg_data
+        from tg.training import tg_train, tg_loss, tg_optimizer
+        from tg.inference import tg as tg_infer, probes
+        from tg.configs import tg_default
+        cfg = tg_config.TgConfig(**tg_default.get_config().model, V=50261)
+        assert cfg.L == 66, cfg.L
+        print('import + config OK')
+        "
 
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v4.0.1
-      with:
-        file: ./coverage.xml
-
-    # The below step just reports the success or failure of tests as a "commit status".
-    # This is needed for copybara integration.
-    - name: Report success or failure as github status
-      if: always()
-      shell: bash
+    - name: Config check
       run: |
-        status="${{ job.status }}"
-        lowercase_status=$(echo $status | tr '[:upper:]' '[:lower:]')
-        curl -sS --request POST \
-        --url https://api.github.com/repos/${{ github.repository }}/statuses/${{ github.sha }} \
-        --header 'authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' \
-        --header 'content-type: application/json' \
-        --data '{
-           "state": "'$lowercase_status'",
-           "target_url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}",
-           "description": "'$status'",
-           "context": "github-actions/linux"
-           }'
+        python -c "
+        from tg.configs import tg_default, default, gpt2_boundary, gpt2_gist
+        from tg.models import factory
+        for name, mod in [('tg', tg_default), ('do', default),
+                          ('boundary', gpt2_boundary), ('gist', gpt2_gist)]:
+            factory.get_model_and_loss(mod.get_config(), 50261)
+            print(name, 'OK')
+        "

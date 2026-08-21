@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Functions to evaluate nanodo runs."""
+"""Functions to evaluate NanoDO runs."""
 
 # pylint: disable=invalid-name,g-importing-member,g-import-not-at-top
 
@@ -25,8 +25,8 @@ import jax
 from jax.sharding import Mesh
 from jax.sharding import NamedSharding
 from jax.sharding import PartitionSpec as P
-from nanodo import data
-from nanodo import metrics as metrics_lib
+from tg.data import gpt2 as data
+from tg.training import metrics as metrics_lib
 import numpy as np
 from optax import losses
 

@@ -20,7 +20,7 @@ from typing import Any, Callable, TYPE_CHECKING
 from flax.struct import dataclass
 import jax
 import jax.numpy as jnp
-from nanodo import data
+from tg.data import gpt2 as data
 from optax import losses
 
 if TYPE_CHECKING:

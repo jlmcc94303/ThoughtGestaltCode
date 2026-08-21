@@ -31,12 +31,14 @@ import jax.numpy as jnp
 from jax.sharding import Mesh
 from jax.sharding import NamedSharding
 from jax.sharding import PartitionSpec as P
-from nanodo import data
-from nanodo import evaluate
-from nanodo import loss as loss_lib
-from nanodo import metrics as metrics_lib
-from nanodo import model_factory
-from nanodo import optimizer
+from tg.data import gpt2 as data
+from tg.data import tg as tg_data
+from tg.data import tg_flat
+from tg.models import factory as model_factory
+from tg.training import evaluate
+from tg.training import loss as loss_lib
+from tg.training import metrics as metrics_lib
+from tg.training import optimizer
 import numpy as np
 import optax
 import orbax.checkpoint as ocp
@@ -53,6 +55,9 @@ PyTree = Any
 
 def train_and_evaluate(c: "ml_collections.ConfigDict"):
   """Train loop."""
+
+  if c.get("model_type", "do") == "tg":
+    return _tg_train_and_evaluate(c)
 
   mesh = Mesh(mesh_utils.create_device_mesh((jax.device_count(),)), ("data",))
   # For multistep gradient accumulator to simulate large batch sizes.
@@ -74,8 +79,18 @@ def train_and_evaluate(c: "ml_collections.ConfigDict"):
   os.makedirs(c.workdir, exist_ok=True)
   rng = jax.random.PRNGKey(c.seed)
 
-  tokenizer = data.get_py_tokenizer(c.vocab_path)
-  vocab_size = tokenizer.GetPieceSize()
+  tg_flat_tokenizer = None
+  tg_flat_specials = None
+  if c.get("ds_source", "tfds") == "tg_flat":
+    # Same GPT-2 tokenizer (+ [PAD] [BOS] [EOS] [EOD]) the TG runs use, so the
+    # baseline and TG see an identical vocabulary and identical lexical tokens.
+    tg_flat_tokenizer = tg_data.build_tokenizer()
+    tg_flat_specials = tg_data.special_ids_from_tokenizer(tg_flat_tokenizer)
+    vocab_size = len(tg_flat_tokenizer)
+    tokenizer = tg_flat_tokenizer
+  else:
+    tokenizer = data.get_py_tokenizer(c.vocab_path)
+    vocab_size = tokenizer.GetPieceSize()
 
   model, get_loss_fn = model_factory.get_model_and_loss(c, vocab_size)
 
@@ -84,30 +99,54 @@ def train_and_evaluate(c: "ml_collections.ConfigDict"):
   init_time = time.time() - tic
   logging.info("[TIMING]: get_new_state (jit init) time: %.2fs", init_time)
 
-  train_ds = data.py_batched_tfds(
-      tfds_name=c.ds_name,
-      split="train",
-      context_size=c.model.L,
-      worker_count=c.pygrain_worker_count,
-      vocab_path=c.vocab_path,
-      batch_size=micro_batch_size,
-      num_epochs=c.train_epochs,
-      preprocessing=data.Preprocess.NOAM_PACKED,
-      worker_buffer_size=c.pygrain_worker_buffer_size,
-  )
-  train_iter = iter(train_ds)
+  local_blocks = c.get("ds_source", "tfds") == "tg_flat"
+  if local_blocks:
+    # GPT-2 + sentence-boundary bias (paper 3.3): the model is stock, only the
+    # token stream changes -- TG's sentences flattened with [BOS]/[EOS] kept.
+    train_iter, local_eval_iter, block_stats = tg_flat.build_iterators(
+        train_path=c.tg_flat_train_path,
+        val_path=c.tg_flat_val_path,
+        tokenizer=tg_flat_tokenizer,
+        specials=tg_flat_specials,
+        context_size=c.model.L,
+        batch_size=micro_batch_size,
+        eval_batch_size=c.get("eval_batch_size", micro_batch_size),
+        document_format=c.get("tg_document_format", "wikitext"),
+        num_epochs=c.train_epochs,
+        seed=c.seed,
+    )
+    logging.info(
+        "tg_flat corpus: train %s | val %s | %d steps/epoch",
+        block_stats["train"], block_stats["val"], train_iter.steps_per_epoch,
+    )
+  else:
+    train_ds = data.py_batched_tfds(
+        tfds_name=c.ds_name,
+        split="train",
+        context_size=c.model.L,
+        worker_count=c.pygrain_worker_count,
+        vocab_path=c.vocab_path,
+        batch_size=micro_batch_size,
+        num_epochs=c.train_epochs,
+        preprocessing=data.Preprocess.NOAM_PACKED,
+        worker_buffer_size=c.pygrain_worker_buffer_size,
+    )
+    train_iter = iter(train_ds)
+    local_eval_iter = None
 
   if c.checkpoint:
     ckpt_mngr = _get_ckpt_manager(c.workdir, c)
     if c.checkpoint_restore_dir is not None:
       logging.info("Restoring checkpoint from %s", c.checkpoint_restore_dir)
       ex_ckpt_mngr = _get_ckpt_manager(c.checkpoint_restore_dir, c)
-      state, train_iter = _restore_ckpt(ex_ckpt_mngr, state, train_iter)
+      state, train_iter = _restore_ckpt(
+          ex_ckpt_mngr, state, train_iter, local_blocks=local_blocks)
 
     elif ckpt_mngr.latest_step() is not None:
       latest_step = ckpt_mngr.latest_step()
       logging.info("Restoring checkpoint %d from %s", latest_step, c.workdir)
-      state, train_iter = _restore_ckpt(ckpt_mngr, state, train_iter)
+      state, train_iter = _restore_ckpt(
+          ckpt_mngr, state, train_iter, local_blocks=local_blocks)
 
   trainer = Trainer(
       c=c,
@@ -130,18 +169,21 @@ def train_and_evaluate(c: "ml_collections.ConfigDict"):
     raise ValueError(
         "Eval Batch size must be divisible by the number of devices.")
 
-  eval_ds = data.py_batched_tfds(
-      tfds_name=c.ds_name,
-      split=c.eval_split,
-      context_size=c.model.L,
-      worker_count=c.pygrain_worker_count,
-      vocab_path=c.vocab_path,
-      batch_size=eval_batch_size,
-      num_epochs=1,
-      num_records=None,
-      preprocessing=data.Preprocess.PADDED,
-      shuffle=False,
-  )
+  if local_blocks:
+    eval_ds = local_eval_iter
+  else:
+    eval_ds = data.py_batched_tfds(
+        tfds_name=c.ds_name,
+        split=c.eval_split,
+        context_size=c.model.L,
+        worker_count=c.pygrain_worker_count,
+        vocab_path=c.vocab_path,
+        batch_size=eval_batch_size,
+        num_epochs=1,
+        num_records=None,
+        preprocessing=data.Preprocess.PADDED,
+        shuffle=False,
+    )
   evaluator = evaluate.Evaluator(c, model, eval_ds, mesh, shardings)
 
   writer = metric_writers.create_default_writer(
@@ -178,7 +220,15 @@ def train_and_evaluate(c: "ml_collections.ConfigDict"):
       if c.checkpoint:
         step = trainer.step
         logging.info("Saving last checkpoint step %d", step)
-        ckpt_mngr.save(step, {"state": trainer.state, "data": train_iter})  # pylint: disable=undefined-variable
+        if local_blocks:
+          # `BlockIterator` is not an orbax-serializable grain iterator; its
+          # whole state is two ints, so save those instead of the object.
+          ckpt_mngr.save(step, {  # pylint: disable=undefined-variable
+              "state": trainer.state,
+              "data_pos": train_iter.get_state(),
+          })
+        else:
+          ckpt_mngr.save(step, {"state": trainer.state, "data": train_iter})  # pylint: disable=undefined-variable
 
     def _process_metrics(step, microbatch_metrics):
       if microbatch_metrics and step % c.write_train_metrics_every_steps == 0:
@@ -347,6 +397,18 @@ def _init_train_state(
   return shardings, state
 
 
+########################################################################
+# Thought Gestalt (TG) branch -- implemented in tg/training/tg_train.py, which is
+# epoch-driven (the chunk-size curriculum rebuilds the loader, and with it the
+# LR budget, at epoch boundaries).
+########################################################################
+
+
+def _tg_train_and_evaluate(c: "ml_collections.ConfigDict"):
+  from tg.training import tg_train  # local import: pulls in orbax/clu lazily
+  return tg_train.train_and_evaluate(c)
+
+
 def _get_ckpt_manager(
     ckpt_dir: str,
     c: "ml_collections.ConfigDict",
@@ -364,10 +426,23 @@ def _restore_ckpt(
     state: TrainState,
     train_iter: Iterator[jax.Array],
     step: int | None = None,
+    local_blocks: bool = False,
 ) -> tuple[TrainState, Iterator[jax.Array]]:
-  """Restore a checkpoint."""
+  """Restore a checkpoint.
+
+  `local_blocks` selects the `tg_flat.BlockIterator` path, whose position is
+  two ints rather than a serializable grain iterator.
+  """
   restore_args = ocp.checkpoint_utils.construct_restore_args(state)
   restore_kwargs = {"state": {"restore_args": restore_args}}
+  if local_blocks:
+    restored = ckpt_mngr.restore(
+        ckpt_mngr.latest_step() if step is None else step,
+        items={"state": state, "data_pos": train_iter.get_state()},
+        restore_kwargs=restore_kwargs,
+    )
+    train_iter.set_state(restored["data_pos"])
+    return restored["state"], train_iter
   restored = ckpt_mngr.restore(
       ckpt_mngr.latest_step() if step is None else step,
       items={"state": state, "data": train_iter},

@@ -3,21 +3,26 @@ requires = ["flit_core>=3.9.0"]
 build-backend = "flit_core.buildapi"
 
 [project]
-name = "nanodo"
+name = "thought-gestalt"
 dynamic = ["version"]
-description = "A minimal ('nano') Transformer decoder-only ('do') library in JAX."
+description = "Thought Gestalt: a sentence-level recurrent language model in JAX/Flax, built on NanoDO."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
 authors = [
-    {name = "Google DeepMind", email = "nanodo-team@google.com"},
+    {name = "Thought Gestalt contributors"},
 ]
+# Built on NanoDO (Google DeepMind, Apache-2.0). The import package is `tg`;
+# see [tool.flit.module] below.
 keywords = [
     "python",
     "machine learning",
     "llm",
     "jax",
     "flax",
+    "sentence representations",
+    "recurrent transformer",
+    "working memory",
     "decoder-only",
     "large language model",
     "language modelling",
@@ -62,19 +67,18 @@ dependencies = [
     "sentencepiece>=0.2.0",
     "tensorflow_datasets>=4.9.5",
     "tensorflow>=2.16.1",
+    "transformers>=4.38.0",
 ]
 
 [project.urls]
-homepage = "https://github.com/google-deepmind/nanodo"
-repository = "https://github.com/google-deepmind/nanodo"
-# documentation = "https://nanodo.readthedocs.io/"
+homepage = "https://github.com/jlmcc94303/ThoughtGestaltCode"
+repository = "https://github.com/jlmcc94303/ThoughtGestaltCode"
+upstream = "https://github.com/google-deepmind/nanodo"
+paper = "https://arxiv.org/abs/2512.25026"
 
-[project.optional-dependencies]
-test = [
-    "chex>=0.1.86",
-]
+[tool.flit.module]
+name = "tg"
 
 [tool.setuptools.packages.find]
-where = ["nanodo"]
+where = ["tg"]
 include = ["README.md", "LICENSE"]
-exclude = ["*_test.py"]
