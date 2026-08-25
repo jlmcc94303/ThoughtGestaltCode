@@ -3,11 +3,14 @@
 A JAX/Flax implementation of the **Thought Gestalt (TG)** model — a recurrent
 transformer that models language at two levels of abstraction: tokens and
 sentence-level "thought" states
-([arXiv:2512.25026](https://arxiv.org/abs/2512.25026)).
+([arXiv:2512.25026](https://arxiv.org/abs/2512.25026)). 
 
 
 Built on [NanoDO](https://github.com/google-deepmind/nanodo), which supplies the
-underlying JAX training infrastructure.
+underlying JAX training infrastructure.  This version differs slightly from the
+version of the model described in ([arXiv:2512.25026](https://arxiv.org/abs/2512.25026)).  
+It achieves comparable results to those reported in the paper when trained
+with 12M text tokens.
 
 ## Install
 
